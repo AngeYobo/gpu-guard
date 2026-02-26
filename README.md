@@ -1,24 +1,19 @@
 # GPU Guard
 
-GPU Guard is a thin product layer that uses **OxDeAI-core** as a deterministic, fail-closed
-economic authorization engine for autonomous GPU infrastructure actions.
+Deterministic policy engine + hash-chained audit log for GPU provisioning.
 
-## What it enforces (today)
-- Budget caps (per period)
-- Per-action caps
-- Velocity limits (runaway loop protection)
-- Kill switch (global / per-agent)
-- Replay protection (nonce)
-- Cryptographic authorization + hash-chained audit log (via OxDeAI-core)
+## Features
 
-## Units
-This repo uses **minor units** for money (e.g., cents) represented as `bigint`.
-- Example: $500.00/day budget with `COST_SCALE=100` => `BUDGET_LIMIT_MINOR=50000`
+- PolicyEngine integration (OxDeAI-core)
+- Hash-chained tamper-evident audit
+- SQLite persistence (WAL)
+- Operator CLI
+- Policy export/import
+- Reset / wipe / init
 
-## Quickstart
-From `gpu-guard/`:
+## Example
 
-1) Choose a valid `ActionType` from your local OxDeAI-core:
-```bash
-cat ../OxDeAI-core/packages/core/src/types/intent.ts
+pnpm dev init --file policy.json
+pnpm dev launch a100 us-east-1 --action PROVISION
+pnpm dev audit --json
 
