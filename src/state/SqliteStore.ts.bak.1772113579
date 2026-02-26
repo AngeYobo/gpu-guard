@@ -1,0 +1,167 @@
+import Database from "better-sqlite3";
+import { createHash } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import type { AuditEvent, State } from "@oxdeai/core";
+
+function sha256Hex(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
+}
+
+function ensureDir(dbPath: string) {
+  mkdirSync(dirname(dbPath), { recursive: true });
+}
+
+type StoredAuditRow = {
+  id: number;
+  event_json: string;
+  prev_hash: string;
+  hash: string;
+};
+
+export class SqliteStore {
+  private readonly db: Database.Database;
+
+  constructor(dbPath: string) {
+    ensureDir(dbPath);
+    this.db = new Database(dbPath);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
+    this.migrate();
+  }
+
+  private migrate() {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS kv (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_json TEXT NOT NULL,
+        prev_hash TEXT NOT NULL,
+        hash TEXT NOT NULL UNIQUE,
+        UNIQUE(prev_hash, event_json)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_audit_events_id ON audit_events(id);
+      CREATE INDEX IF NOT EXISTS idx_audit_events_hash ON audit_events(hash);
+    `);
+  }
+
+  // --- State persistence ---
+
+  loadState(): State | null {
+    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get("state") as any;
+    if (!row) return null;
+    return this.reviveState(JSON.parse(row.value));
+  }
+
+  saveState(state: State): void {
+    const json = JSON.stringify(state, (_k, v) => (typeof v === "bigint" ? `${v.toString()}n` : v));
+    this.db
+      .prepare("INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+      .run("state", json);
+  }
+
+  private reviveState(obj: any): State {
+    const revive = (v: any): any => {
+      if (typeof v === "string" && /^[0-9]+n$/.test(v)) return BigInt(v.slice(0, -1));
+      if (Array.isArray(v)) return v.map(revive);
+      if (v && typeof v === "object") {
+        const out: any = {};
+        for (const [k, val] of Object.entries(v)) out[k] = revive(val);
+        return out;
+      }
+      return v;
+    };
+    return revive(obj) as State;
+  }
+
+  // --- Audit persistence ---
+
+  auditHeadHash(): string {
+    const row = this.db.prepare("SELECT hash FROM audit_events ORDER BY id DESC LIMIT 1").get() as any;
+    return row ? row.hash : "GENESIS";
+  }
+
+  auditSnapshot(): AuditEvent[] {
+    const rows = this.db.prepare("SELECT event_json FROM audit_events ORDER BY id ASC").all() as any[];
+    return rows.map((r) => JSON.parse(r.event_json) as AuditEvent);
+  }
+
+  auditVerify(): boolean {
+    const rows = this.db
+      .prepare("SELECT id, event_json, prev_hash, hash FROM audit_events ORDER BY id ASC")
+      .all() as StoredAuditRow[];
+
+    let prev = "GENESIS";
+    for (const r of rows) {
+      if (r.prev_hash !== prev) return false;
+      const expected = sha256Hex(`${prev}\n${r.event_json}`);
+      if (r.hash !== expected) return false;
+      prev = r.hash;
+    }
+    return true;
+  }
+
+  appendAuditEvents(events: AuditEvent[]): void {
+    if (!events.length) return;
+
+    const insert = this.db.prepare(
+      "INSERT INTO audit_events(event_json, prev_hash, hash) VALUES(?, ?, ?)"
+    );
+
+    const exists = this.db.prepare(
+      "SELECT 1 FROM audit_events WHERE prev_hash = ? AND event_json = ? LIMIT 1"
+    );
+
+    const tx = this.db.transaction((evs: AuditEvent[]) => {
+      // lock léger sur kv (une clé dédiée) pour sérialiser les writers
+      // (SQLite sérialise déjà les writes, mais ça évite les têtes divergentes entre process)
+      this.db.prepare("INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=value")
+        .run("__audit_write_lock__", "1");
+
+      let prev = this.auditHeadHash();
+
+      for (const ev of evs) {
+        const event_json = JSON.stringify(ev);
+        const hash = sha256Hex(`${prev}\n${event_json}`);
+
+        try {
+          insert.run(event_json, prev, hash);
+        } catch (e: any) {
+          // idempotence stricte : si (prev_hash,event_json) existe déjà, OK; sinon erreur
+          const ok = exists.get(prev, event_json);
+          if (!ok) throw e;
+        }
+
+        // avancer uniquement sur un append idempotent déterministe (même prev+event_json => même hash)
+        prev = hash;
+      }
+    });
+
+    tx(events);
+  }
+  resetAudit(): void {
+    this.db.exec("DELETE FROM audit_events;");
+  }
+
+  wipeAll(): void {
+    this.db.exec("DELETE FROM audit_events;");
+    this.db.exec("DELETE FROM kv;");
+  }
+  resetAudit(): void {
+    this.db.exec("DELETE FROM audit_events;");
+  }
+
+  wipeAll(): void {
+    this.db.exec("DELETE FROM audit_events;");
+    this.db.exec("DELETE FROM kv;");
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}

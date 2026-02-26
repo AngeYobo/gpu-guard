@@ -1,0 +1,43 @@
+{
+  "policy_version": "v0.1",
+  "period_id": "day",
+  "kill_switch": {
+    "global": false,
+    "agents": {}
+  },
+  "allowlists": {
+    "action_types": [
+      "<valid literal>"
+    ],
+    "assets": [
+      "a100",
+      "h100"
+    ],
+    "targets": [
+      "us-east-1"
+    ]
+  },
+  "budget": {
+    "budget_limit": {
+      "gpu-agent-1": "50000n"
+    },
+    "spent_in_period": {
+      "gpu-agent-1": "32000n"
+    }
+  },
+  "max_amount_per_action": {
+    "gpu-agent-1": "1000000n"
+  },
+  "velocity": {
+    "config": {
+      "window_seconds": 60,
+      "max_actions": 5
+    },
+    "counters": {
+      "gpu-agent-1": {
+        "window_start": 1772101783,
+        "count": 1
+      }
+    }
+  }
+}
