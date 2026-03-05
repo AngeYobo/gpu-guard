@@ -10,3 +10,6 @@ mock-*
 gpu-guard@*
 tsc
 tsx
+!src/state/
+!src/state/**
+!src/mock-*
