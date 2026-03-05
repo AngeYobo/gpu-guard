@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/cli/main.ts"
+    "dev": "tsx src/cli/main.ts",
+    "demo": "tsx src/cli/main.ts demo a100 us-east-1 --action PROVISION",
+    "demo:init": "tsx src/cli/main.ts init --file policy.json"
   },
   "dependencies": {
     "@oxdeai/core": "file:../OxDeAI-core/packages/core",

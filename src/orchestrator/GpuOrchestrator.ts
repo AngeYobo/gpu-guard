@@ -27,11 +27,125 @@ export class GpuOrchestrator {
   private readonly store: SqliteStore;
 
   private load(): State {
-    return this.store.loadState() ?? this.state;
+    const loaded = this.store.loadState();
+    if (!loaded) return this.state;
+    const normalized = this.normalizeState(loaded);
+    this.state = normalized;
+    return normalized;
   }
   private save(s: State): void {
-    this.store.saveState(s);
-    this.state = s;
+    const normalized = this.normalizeState(s);
+    this.store.saveState(normalized);
+    this.state = normalized;
+  }
+
+  private normalizeState(input: unknown): State {
+    const base = this.runtime.makeState() as any;
+    const src = (input ?? {}) as any;
+
+    const merged = {
+      ...base,
+      ...src,
+
+      kill_switch: {
+        ...base.kill_switch,
+        ...(src.kill_switch ?? {}),
+        agents: {
+          ...(base.kill_switch?.agents ?? {}),
+          ...(src.kill_switch?.agents ?? {})
+        }
+      },
+
+      allowlists: {
+        ...base.allowlists,
+        ...(src.allowlists ?? {})
+      },
+
+      budget: {
+        ...base.budget,
+        ...(src.budget ?? {}),
+        budget_limit: {
+          ...(base.budget?.budget_limit ?? {}),
+          ...(src.budget?.budget_limit ?? {})
+        },
+        spent_in_period: {
+          ...(base.budget?.spent_in_period ?? {}),
+          ...(src.budget?.spent_in_period ?? {})
+        }
+      },
+
+      max_amount_per_action: {
+        ...(base.max_amount_per_action ?? {}),
+        ...(src.max_amount_per_action ?? {})
+      },
+
+      velocity: {
+        ...base.velocity,
+        ...(src.velocity ?? {}),
+        config: {
+          ...(base.velocity?.config ?? {}),
+          ...(src.velocity?.config ?? {})
+        },
+        counters: {
+          ...(base.velocity?.counters ?? {}),
+          ...(src.velocity?.counters ?? {})
+        }
+      },
+
+      replay: {
+        ...(base.replay ?? {}),
+        ...(src.replay ?? {}),
+        nonces: {
+          ...(base.replay?.nonces ?? {}),
+          ...(src.replay?.nonces ?? {})
+        }
+      },
+
+      concurrency: {
+        ...(base.concurrency ?? {}),
+        ...(src.concurrency ?? {}),
+        max_concurrent: {
+          ...(base.concurrency?.max_concurrent ?? {}),
+          ...(src.concurrency?.max_concurrent ?? {})
+        },
+        active: {
+          ...(base.concurrency?.active ?? {}),
+          ...(src.concurrency?.active ?? {})
+        },
+        active_auths: {
+          ...(base.concurrency?.active_auths ?? {}),
+          ...(src.concurrency?.active_auths ?? {})
+        }
+      },
+
+      recursion: {
+        ...(base.recursion ?? {}),
+        ...(src.recursion ?? {}),
+        max_depth: {
+          ...(base.recursion?.max_depth ?? {}),
+          ...(src.recursion?.max_depth ?? {})
+        }
+      },
+
+      tool_limits: {
+        ...(base.tool_limits ?? {}),
+        ...(src.tool_limits ?? {}),
+        max_calls: {
+          ...(base.tool_limits?.max_calls ?? {}),
+          ...(src.tool_limits?.max_calls ?? {})
+        },
+        max_calls_by_tool: {
+          ...(base.tool_limits?.max_calls_by_tool ?? {}),
+          ...(src.tool_limits?.max_calls_by_tool ?? {})
+        },
+        calls: {
+          ...(base.tool_limits?.calls ?? {}),
+          ...(src.tool_limits?.calls ?? {})
+        }
+      }
+    };
+
+    return merged as unknown as State;
   }
 
   constructor(runtime: RuntimeState, provider?: GpuProvider) {
@@ -48,9 +162,10 @@ export class GpuOrchestrator {
     const dbPath = process.env["GPU_GUARD_DB"] ?? "./.gpu-guard/gpu-guard.db";
     this.store = new SqliteStore(dbPath);
 
-    // load persisted state, else default
-    this.state = this.store.loadState() ?? this.runtime.makeState();
-    // ensure persisted state exists
+    // Load persisted state and normalize it to current schema.
+    const loaded = this.store.loadState() ?? this.runtime.makeState();
+    this.state = this.normalizeState(loaded);
+    // Ensure normalized state exists on disk.
     this.store.saveState(this.state);
   }
 
@@ -183,7 +298,7 @@ export class GpuOrchestrator {
   }
 
   getState(): State {
-    return this.store.loadState() ?? this.state;
+    return this.load();
   }
 
   getAudit(): { headHash: string; verify: boolean; events: unknown[] } {
@@ -195,8 +310,7 @@ export class GpuOrchestrator {
   }
 
   setState(state: State): void {
-    this.store.saveState(state);
-    this.state = state;
+    this.save(state);
   }
 
   exportStateJson(): string {
@@ -222,8 +336,8 @@ export class GpuOrchestrator {
       return v;
     };
 
-    const state = revive(parsed) as State;
-    this.setState(state);
+    const input = revive(parsed);
+    this.setState(this.normalizeState(input));
   }
 
 
@@ -259,33 +373,8 @@ export class GpuOrchestrator {
   }
 
   resetState(): void {
-    const current = this.store.loadState() ?? this.state;
-
-    const newState: State = {
-      ...current,
-
-      allowlists: {
-        ...current.allowlists,
-        action_types: ["PROVISION"]
-      },
-
-      budget: {
-        budget_limit: {
-          [this.runtime.agent_id]: 0n
-        },
-        spent_in_period: {
-          [this.runtime.agent_id]: 0n
-        }
-      },
-
-      velocity: {
-        ...current.velocity,
-        counters: {}
-      }
-    };
-
-    this.store.saveState(newState);
-    this.state = newState;
+    const fresh = this.runtime.makeState();
+    this.save(fresh);
 
     console.log("State has been reset.");
   }

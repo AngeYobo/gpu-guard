@@ -2,7 +2,8 @@ import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { AuditEvent, State } from "@oxdeai/core";
+import type { State } from "@oxdeai/core";
+type AuditEvent = { type: string; timestamp: number; [k: string]: unknown };
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
