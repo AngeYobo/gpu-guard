@@ -1,8 +1,13 @@
 import type { ActionType, State } from "@oxdeai/core";
 
 export class RuntimeState {
-  public readonly agent_id = "gpu-agent-1";
-  public readonly policy_version = "v0.1";
+  public readonly agent_id: string;
+  public readonly policy_version: string;
+
+  constructor(agent_id = "gpu-agent-1", policy_version = "v0.1") {
+    this.agent_id = agent_id;
+    this.policy_version = policy_version;
+  }
 
   makeState(): State {
     const actionType = (

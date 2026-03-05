@@ -16,7 +16,13 @@ type Flags = {
 function usage() {
   console.log(`gpu-guard CLI
 
-Usage:
+Operator Baseline:
+  pnpm dev init --file <policy.json>
+  pnpm dev launch <type> <region> --action <ActionType>
+  pnpm dev audit --json
+  pnpm dev state --json
+
+Extended Usage:
   pnpm dev audit [--json] [--db <path>]
   pnpm dev state [--json] [--db <path>]
   pnpm dev launch <type> <region> [--action <ActionType>] [--db <path>] [--agent <id>]
@@ -114,13 +120,17 @@ function parseFlags(argv: string[]): { args: string[]; flags: Flags } {
       continue;
     }
 
-    // allow --key=value style for db/agent
+    // allow --key=value style for common flags
     if (a.startsWith("--db=")) {
       flags.db = a.slice("--db=".length);
       continue;
     }
     if (a.startsWith("--agent=")) {
       flags.agent = a.slice("--agent=".length);
+      continue;
+    }
+    if (a.startsWith("--action=")) {
+      flags.action = a.slice("--action=".length);
       continue;
     }
     if (a.startsWith("--file=")) {
@@ -175,11 +185,7 @@ async function main() {
   // Apply DB override via env (GpuOrchestrator reads GPU_GUARD_DB)
   if (flags.db) process.env["GPU_GUARD_DB"] = flags.db;
 
-  const runtime = new RuntimeState();
-
-  // If you want agent override, RuntimeState would need to accept it.
-  // For now, we keep it simple and pass runtime as-is.
-  // If you already implemented setBudgetLimit(agentId?), etc., CLI can pass flags.agent as arg.
+  const runtime = new RuntimeState(flags.agent);
   const orch = new GpuOrchestrator(runtime);
 
   // --- READ COMMANDS ---
@@ -368,9 +374,11 @@ async function main() {
       console.error("Missing --file <path>");
       process.exit(2);
     }
+    const text = readFileSync(file, "utf8");
+    // Validate JSON before destructive wipe.
+    JSON.parse(text);
     // Clean slate: state + audit
     orch.wipeDb();
-    const text = readFileSync(file, "utf8");
     orch.importStateJson(text);
     if (!flags.json) console.log("OK");
     return;
@@ -387,21 +395,9 @@ async function main() {
       process.exit(2);
     }
 
-    // Prefer explicit --action via args: `launch <type> <region> --action PROVISION`
-    // If not provided, fallback to env OXDEAI_ACTION_TYPE for compatibility.
-    // We'll parse a lightweight `--action` from argv directly (since parseFlags ignores it by design).
-    const actionFlagIdx = argv.findIndex((x) => x === "--action" || x.startsWith("--action="));
-    let actionType: string | undefined;
-
-    if (actionFlagIdx >= 0) {
-      const token = argv[actionFlagIdx];
-      if (token.startsWith("--action=")) actionType = token.slice("--action=".length);
-      else actionType = argv[actionFlagIdx + 1];
-    }
-
-    actionType = actionType ?? process.env["OXDEAI_ACTION_TYPE"];
+    const actionType = flags.action;
     if (!actionType) {
-      console.error("Missing action type. Provide --action <PAYMENT|PURCHASE|PROVISION|ONCHAIN_TX> or set OXDEAI_ACTION_TYPE.");
+      console.error("Missing action type. Provide --action <PAYMENT|PURCHASE|PROVISION|ONCHAIN_TX>.");
       process.exit(2);
     }
 
