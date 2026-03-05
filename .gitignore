@@ -5,3 +5,8 @@ coverage
 .gpu-guard
 *.log
 .DS_Store
+state/
+mock-*
+gpu-guard@*
+tsc
+tsx
